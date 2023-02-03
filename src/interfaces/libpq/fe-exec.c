@@ -2710,6 +2710,42 @@ PQgetCopyData(PGconn *conn, char **buffer, int async)
 }
 
 /*
+ * PQhandleCopyData - read a row of data from the backend during COPY OUT
+ * or COPY BOTH, and invoke a callback.
+ *
+ * Pass a "handler" callback which takes a buffer and its size.  (Its return
+ * value is currently stil meaningless, but could become a flag like "this
+ * ride is making me sick and I'd like to get off.)
+ *
+ * Calls handler only after receiving a full row.  The buffer does NOT have a
+ * terminating zero, so do not go beyond the given size.  However, you may
+ * modify the buffer's contents, and the line ends in a newline.  If you need
+ * a terminating zero, you are free to overwrite the newline.
+ *
+ * The context pointer can be anything; this function will pass it to handler.
+ *
+ * If successful, calls handler and returns row length (always > 0) as result.
+ * If no row is available yet (only possible if async is true), does not call
+ * handler, and returns 0 as result.
+ * If the copy has ended (consult PQgetResult), does not call handler, and
+ * returns -1.
+ * On failure, does not call handler, and returns -2 (consult PQerrorMessage).
+ */
+int
+PQhandleCopyData(PGconn *conn, int (*handler) (void *, char *, size_t), void *context, int async)
+{
+	if (!conn)
+		return -2;
+	if (conn->asyncStatus != PGASYNC_COPY_OUT &&
+		conn->asyncStatus != PGASYNC_COPY_BOTH)
+	{
+		libpq_append_conn_error(conn, "no COPY in progress");
+		return -2;
+	}
+	return pqHandleCopyData3(conn, handler, context, async);
+}
+
+/*
  * PQgetline - gets a newline-terminated string from the backend.
  *
  * Chiefly here so that applications can use "COPY <rel> to stdout"

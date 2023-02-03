@@ -1784,6 +1784,63 @@ pqGetCopyData3(PGconn *conn, char **buffer, int async)
 }
 
 /*
+ * PQhandleCopyData - read a row of data from the backend during COPY OUT
+ * or COPY BOTH, and pass it to a caller-supplied buffer.
+ *
+ * Pass a "handler" callback which takes a buffer and its size.  (Its return
+ * value is currently stil meaningless, but could become a flag like "this
+ * ride is making me sick and I'd like to get off.)
+ *
+ * Calls handler only after receiving a full row.  The buffer does NOT have a
+ * terminating zero, so do not go beyond the given size.  However, you may
+ * modify the buffer's contents, and the line ends in a newline.  If you need
+ * a terminating zero, you are free to overwrite the newline.
+ *
+ * The context pointer can be anything; this function will pass it to handler.
+ *
+ * If successful, calls handler and returns row length (always > 0) as result.
+ * If no row is available yet (only possible if async is true), does not call
+ * handler, and returns 0 as result.
+ * If the copy has ended (consult PQgetResult), does not call handler, and
+ * returns -1.
+ * On failure, does not call handler, and returns -2 (consult PQerrorMessage).
+ */
+int
+pqHandleCopyData3(PGconn *conn, int (*handler) (void *, char *, size_t), void *context, int async)
+{
+	int			msgLength;
+
+	for (;;)
+	{
+		msgLength = getCopyDataMessage(conn);
+		if (msgLength < 0)
+			return msgLength;	/* end-of-copy or error */
+		if (msgLength == 0)
+		{
+			/* Don't block if async read requested */
+			if (async)
+				return 0;
+			/* Need to load more data */
+			if (pqWait(true, false, conn) ||
+				pqReadData(conn) < 0)
+				return -2;
+			continue;
+		}
+
+		msgLength -= 4;
+		if (msgLength > 0)
+		{
+			/* We have a row.  Call the handler. */
+			handler(context, &conn->inBuffer[conn->inCursor], msgLength);
+			conn->inStart = conn->inCursor + msgLength;
+			return msgLength;
+		}
+
+		conn->inStart = conn->inCursor;
+	}
+}
+
+/*
  * PQgetline - gets a newline-terminated string from the backend.
  *
  * See fe-exec.c for documentation.
