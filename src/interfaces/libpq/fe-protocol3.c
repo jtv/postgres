@@ -1723,9 +1723,9 @@ getCopyDataMessage(PGconn *conn)
  * PQhandleCopyData - read a row of data from the backend during COPY OUT
  * or COPY BOTH, and pass it to a caller-supplied buffer.
  *
- * Pass a "handler" callback which takes a buffer and its size.  (Its return
- * value is currently stil meaningless, but could become a flag like "this
- * ride is making me sick and I'd like to get off.)
+ * Pass a "handler" callback which takes a buffer and its size.  If the handler
+ * returns a negative value, PQhandleCopyData will return that as an error
+ * return code.
  *
  * Calls handler only after receiving a full row.  The buffer does NOT have a
  * terminating zero, so do not go beyond the given size.
