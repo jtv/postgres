@@ -36,11 +36,9 @@
  * Print line, add newline.
  */
 static int
-print_row_and_newline(void *, char *buf, size_t len)
+print_row_and_newline(void *, const char *buf, size_t len)
 {
-	/* Zero-terminate the buffer. */
-	buf[len - 1] = '\0';
-	printf("%s\n", buf);
+	fwrite(buf, 1, len, stdout);
 	return 0;
 }
 #endif

@@ -483,7 +483,10 @@ extern int	PQputCopyEnd(PGconn *conn, const char *errormsg);
 extern int	PQgetCopyData(PGconn *conn, char **buffer, int async);
 
 /*  TODO: "House style" would be int, rather than size_t. */
-extern int	PQhandleCopyData(PGconn *conn, int handler(void *, char *, size_t), void *context, int async);
+extern int	PQhandleCopyData(PGconn *conn,
+							 int handler(void *, const char *, size_t),
+							 void *context,
+							 int async);
 
 /* Deprecated routines for copy in/out */
 extern int	PQgetline(PGconn *conn, char *buffer, int length);

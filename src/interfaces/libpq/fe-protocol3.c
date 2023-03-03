@@ -1720,70 +1720,6 @@ getCopyDataMessage(PGconn *conn)
 }
 
 /*
- * PQgetCopyData - read a row of data from the backend during COPY OUT
- * or COPY BOTH
- *
- * If successful, sets *buffer to point to a malloc'd row of data, and
- * returns row length (always > 0) as result.
- * Returns 0 if no row available yet (only possible if async is true),
- * -1 if end of copy (consult PQgetResult), or -2 if error (consult
- * PQerrorMessage).
- */
-int
-pqGetCopyData3(PGconn *conn, char **buffer, int async)
-{
-	int			msgLength;
-
-	for (;;)
-	{
-		/*
-		 * Collect the next input message.  To make life simpler for async
-		 * callers, we keep returning 0 until the next message is fully
-		 * available, even if it is not Copy Data.
-		 */
-		msgLength = getCopyDataMessage(conn);
-		if (msgLength < 0)
-			return msgLength;	/* end-of-copy or error */
-		if (msgLength == 0)
-		{
-			/* Don't block if async read requested */
-			if (async)
-				return 0;
-			/* Need to load more data */
-			if (pqWait(true, false, conn) ||
-				pqReadData(conn) < 0)
-				return -2;
-			continue;
-		}
-
-		/*
-		 * Drop zero-length messages (shouldn't happen anyway).  Otherwise
-		 * pass the data back to the caller.
-		 */
-		msgLength -= 4;
-		if (msgLength > 0)
-		{
-			*buffer = (char *) malloc(msgLength + 1);
-			if (*buffer == NULL)
-			{
-				libpq_append_conn_error(conn, "out of memory");
-				return -2;
-			}
-			memcpy(*buffer, &conn->inBuffer[conn->inCursor], msgLength);
-			(*buffer)[msgLength] = '\0';	/* Add terminating null */
-
-			/* Mark message consumed */
-			conn->inStart = conn->inCursor + msgLength;
-
-			return msgLength;
-		}
-
-		/* Empty, so drop it and loop around for another */
-		conn->inStart = conn->inCursor;
-	}
-}
-
-/*
  * PQhandleCopyData - read a row of data from the backend during COPY OUT
  * or COPY BOTH, and pass it to a caller-supplied buffer.
  *
@@ -1792,9 +1728,7 @@ pqGetCopyData3(PGconn *conn, char **buffer, int async)
  * ride is making me sick and I'd like to get off.)
  *
  * Calls handler only after receiving a full row.  The buffer does NOT have a
- * terminating zero, so do not go beyond the given size.  However, you may
- * modify the buffer's contents, and the line ends in a newline.  If you need
- * a terminating zero, you are free to overwrite the newline.
+ * terminating zero, so do not go beyond the given size.
  *
  * The context pointer can be anything; this function will pass it to handler.
  *
@@ -1806,7 +1740,10 @@ pqGetCopyData3(PGconn *conn, char **buffer, int async)
  * On failure, does not call handler, and returns -2 (consult PQerrorMessage).
  */
 int
-pqHandleCopyData3(PGconn *conn, int (*handler) (void *, char *, size_t), void *context, int async)
+pqGetCopyData3(PGconn *conn,
+			   int (*handler) (void *, const char *, size_t),
+			   void *context,
+			   int async)
 {
 	int			msgLength;
 
@@ -1831,8 +1768,12 @@ pqHandleCopyData3(PGconn *conn, int (*handler) (void *, char *, size_t), void *c
 		if (msgLength > 0)
 		{
 			/* We have a row.  Call the handler. */
-			handler(context, &conn->inBuffer[conn->inCursor], msgLength);
+			int result = handler(context,
+								 &conn->inBuffer[conn->inCursor],
+								 msgLength);
 			conn->inStart = conn->inCursor + msgLength;
+			if (result < 0)
+				return result;
 			return msgLength;
 		}
 

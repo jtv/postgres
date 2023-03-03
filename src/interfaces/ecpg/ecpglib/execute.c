@@ -36,10 +36,9 @@
  * Print non-zero-terminated line received from COPY.
  */
 static int
-print_row(void *, char *buf, size_t len)
+print_row(void *, const char *buf, size_t len)
 {
-	buf[len - 1] = '\0';
-	printf("%s\n", buf);
+	fwrite(buf, 1, len, stdout);
 	return 0;
 }
 
