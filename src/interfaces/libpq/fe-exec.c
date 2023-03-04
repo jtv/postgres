@@ -2684,6 +2684,27 @@ PQputCopyEnd(PGconn *conn, const char *errormsg)
 	return 1;
 }
 
+struct GetCopyData_context
+{
+	PGconn	*conn;
+	char	*buffer;
+};
+
+static int alloc_copy_buffer(void *context, const char *inbuf, size_t len)
+{
+	struct GetCopyData_context *params = (struct GetCopyData_context *) context;
+	PGconn *conn = params->conn;
+	params->buffer = (char *) malloc(len + 1);
+	if (params->buffer == NULL)
+	{
+		libpq_append_conn_error(conn, "out of memory");
+		return -2;
+	}
+	memcpy(params->buffer, &conn->inBuffer[conn->inCursor], len);
+	params->buffer[len] = '\0';	/* Add terminating null */
+	return 0;
+}
+
 /*
  * PQgetCopyData - read a row of data from the backend during COPY OUT
  * or COPY BOTH
@@ -2697,7 +2718,41 @@ PQputCopyEnd(PGconn *conn, const char *errormsg)
 int
 PQgetCopyData(PGconn *conn, char **buffer, int async)
 {
-	*buffer = NULL;				/* for all failure cases */
+	struct GetCopyData_context context;
+	int result;
+	context.conn = conn;
+	context.buffer = NULL;	/* for all failure cases */
+	result = pqGetCopyData3(conn, alloc_copy_buffer, &context, async);
+	*buffer = context.buffer;
+	return result;
+}
+
+/*
+ * PQhandleCopyData - read a row of data from the backend during COPY OUT
+ * or COPY BOTH, and invoke a callback.
+ *
+ * Pass a "handler" callback which takes a buffer and its size.  If the handler
+ * returns a negative value, PQhandleCopyData will return that as an error
+ * return code.
+ *
+ * Calls handler only after receiving a full row.  The buffer does NOT have a
+ * terminating zero, so do not go beyond the given size.
+ *
+ * The context pointer can be anything; this function will pass it to handler.
+ *
+ * If successful, calls handler and returns row length (always > 0) as result.
+ * If no row is available yet (only possible if async is true), does not call
+ * handler, and returns 0 as result.
+ * If the copy has ended (consult PQgetResult), does not call handler, and
+ * returns -1.
+ * On failure, does not call handler, and returns -2 (consult PQerrorMessage).
+ */
+int
+PQhandleCopyData(PGconn *conn,
+				 int (*handler) (void *, const char *, size_t),
+				 void *context,
+				 int async)
+{
 	if (!conn)
 		return -2;
 	if (conn->asyncStatus != PGASYNC_COPY_OUT &&
@@ -2706,7 +2761,7 @@ PQgetCopyData(PGconn *conn, char **buffer, int async)
 		libpq_append_conn_error(conn, "no COPY in progress");
 		return -2;
 	}
-	return pqGetCopyData3(conn, buffer, async);
+	return pqGetCopyData3(conn, handler, context, async);
 }
 
 /*

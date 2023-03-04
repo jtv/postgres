@@ -33,6 +33,16 @@
 #include "sqlda-native.h"
 
 /*
+ * Print non-zero-terminated line received from COPY.
+ */
+static int
+print_row(void *, const char *buf, size_t len)
+{
+	fwrite(buf, 1, len, stdout);
+	return 0;
+}
+
+/*
  *	This function returns a newly malloced string that has ' and \
  *	escaped.
  */
@@ -1876,16 +1886,10 @@ ecpg_process_output(struct statement *stmt, bool clear_result)
 			break;
 		case PGRES_COPY_OUT:
 			{
-				char	   *buffer;
 				int			res;
 
 				ecpg_log("ecpg_process_output on line %d: COPY OUT data transfer in progress\n", stmt->lineno);
-				while ((res = PQgetCopyData(stmt->connection->connection,
-											&buffer, 0)) > 0)
-				{
-					printf("%s", buffer);
-					PQfreemem(buffer);
-				}
+				while ((res = PQhandleCopyData(stmt->connection->connection, print_row, NULL, 0)) > 0);
 				if (res == -1)
 				{
 					/* COPY done */
